@@ -1,0 +1,165 @@
+# MailGuard attachment policy. Rules are evaluated top to bottom per file; the first match
+# decides that file, and the most severe verdict over all files decides the message.
+# Verdicts, least to most severe: allow < strip < quarantine < reject.
+# Each rule's `when` must name a predicate known to mailguard/policy.py, or loading fails.
+version: 2
+
+verdict_order: [allow, strip, quarantine, reject]
+
+# SMTP reply is tracked separately from the security verdict (RFC 5321 §4.2.5).
+smtp_reply:
+  allow:       "250 after successful forward to the sink"
+  strip:       "250 after rewrite, re-parse, re-scan and forward (v1: strip is not used; see R11)"
+  quarantine:  "250 only after the message is durably stored in quarantine; otherwise 451"
+  reject:      "550 (5xx); nothing forwarded"
+  system_error: "451 (4xx); nothing forwarded; never treated as allow"
+
+limits:
+  max_attachment_mb: 25
+  max_archive_depth: 3        # archive inside archive inside archive is OK; a 4th level -> quarantine
+  max_archive_members: 100    # total across all nesting levels
+  max_unpacked_mb: 50
+  max_compression_ratio: 100  # unpacked/packed; above this looks like a zip bomb
+
+# True type comes from content, never from the filename or Content-Type.
+# Magic bytes at offset 0, hex.
+file_types:
+  pe_executable:  {magic: ["4D5A"],               class: executable}
+  elf_executable: {magic: ["7F454C46"],           class: executable}
+  macho:          {magic: ["CFFAEDFE", "FEEDFACF", "CAFEBABE"], class: executable}
+  shebang_script: {magic: ["2321"],               class: script}     # "#!"
+  windows_lnk:    {magic: ["4C0000000114020000000000C000000000000046"], class: shortcut}
+  zip:            {magic: ["504B0304"],           class: archive}
+  sevenzip:       {magic: ["377ABCAF271C"],       class: archive}
+  rar:            {magic: ["526172211A07"],       class: archive}
+  gzip:           {magic: ["1F8B"],               class: archive}
+  ole2:           {magic: ["D0CF11E0A1B11AE1"],   class: legacy_office}
+  pdf:            {magic: ["25504446"],           class: document}   # "%PDF"
+  png:            {magic: ["89504E47"],           class: image}
+  jpeg:           {magic: ["FFD8FF"],             class: image}
+  gif:            {magic: ["47494638"],           class: image}
+
+# Content checks that magic bytes alone cannot do.
+refinements:
+  ooxml:      "A ZIP whose members include '[Content_Types].xml' is class office_ooxml
+               (a document, not an archive). Archive rules R07-R10 do NOT apply to it;
+               it is checked only for 'word|xl|ppt/vbaProject.bin' (R11)."
+  text:       "No magic match, valid UTF-8, and no NUL bytes -> class text."
+  unknown:    "Anything else -> class unknown."
+  embedded_archive: "A non-archive file that also contains a ZIP end-of-central-directory
+               record ('504B0506') is flagged has_embedded_archive (R06)."
+
+# Which true type each allowed extension must have. Used by R05 and R13.
+extension_family:
+  pdf: document
+  png: image
+  jpg: image
+  jpeg: image
+  gif: image
+  txt: text
+  csv: text
+  docx: office_ooxml
+  xlsx: office_ooxml
+  pptx: office_ooxml
+  zip: archive
+
+# Extensions that are dangerous by themselves, whatever the content.
+# For a filename with several dots, the LAST extension counts (invoice.pdf.exe -> exe).
+# Our list plus Gmail's published block list (Gmail's published list).
+dangerous_extensions: [
+  ade, adp, apk, appx, appxbundle, bat, cab, chm, cmd, com, cpl, diagcab,
+  diagcfg, diagpkg, dll, dmg, ex, ex_, exe, hta, img, ins, iso, isp, jar,
+  jnlp, js, jse, lib, lnk, mde, mjs, msc, msi, msix, msixbundle, msp, mst,
+  nsh, pif, ps1, reg, scr, sct, shb, sys, vb, vbe, vbs, vhd, vxd, wsc, wsf,
+  wsh, xll
+]
+macro_extensions: [docm, xlsm, pptm, dotm, xltm, xlam]
+html_like_extensions: [html, htm, xhtml, svg, shtml]
+allowlisted_extensions: [pdf, png, jpg, jpeg, gif, txt, csv, docx, xlsx, pptx, zip]
+
+# Ordered rules, first match wins per file. 'when' names are engine predicates.
+rules:
+  - id: R00
+    when: inspection_incomplete
+    action: quarantine
+    reason: "FAIL CLOSED: a required check did not finish (parse error, decode error, scanner exception, timeout). Never allow unchecked content."
+  - id: R01
+    when: eicar_signature_found
+    action: reject
+    reason: "Known-malware signature (EICAR stands in for the AV engine)."
+  - id: R02
+    when: mime_defect
+    action: quarantine
+    reason: "Malformed MIME: missing/invalid boundary, duplicate or conflicting Content-Type, invalid base64 or quoted-printable, filename vs filename* conflict."
+  - id: R03
+    when: unsafe_filename
+    action: quarantine
+    reason: "Filename has path parts ('../', '/', '\\'), control characters, or is empty; it is display text only and never used as a path (RFC 2183 §5)."
+  - id: R04
+    when: true_type_class in [executable, script, shortcut]
+    action: reject
+    reason: "Executable content, whatever the file is called. Use managed software distribution instead."
+  - id: R05
+    when: extension in dangerous_extensions
+    action: reject
+    reason: "Dangerous final extension, including double extensions such as invoice.pdf.exe."
+  - id: R18
+    when: office_macro_suspicious
+    action: reject
+    reason: "Macro that runs automatically AND writes, executes or downloads (oletools mraptor)."
+  - id: R06
+    when: extension_family != true_type_class or has_embedded_archive
+    action: quarantine
+    reason: "Claimed type and true type disagree, or an archive is hidden inside another file (ACSC email guidance)."
+  - id: R07
+    when: archive_encrypted
+    action: quarantine
+    reason: "Scanner cannot see inside (ACSC email guidance, Gmail's published list). Out-of-band release only."
+  - id: R08
+    when: archive_exceeds_limits
+    action: quarantine
+    reason: "Depth, member count, size or ratio over limit (nesting / zip bomb)."
+  - id: R09
+    when: worst_archive_member_verdict == reject
+    action: reject
+    reason: "Any rejected member rejects the whole archive."
+  - id: R10
+    when: worst_archive_member_verdict == quarantine
+    action: quarantine
+    reason: "Any held member holds the whole archive."
+  - id: R11
+    when: extension in macro_extensions or ooxml_has_vba_project or true_type_class == legacy_office
+    action: quarantine
+    reason: "Active content (macros) (ACSC email guidance). Stands in for sandbox / CDR in the full design."
+  - id: R12
+    when: extension in html_like_extensions
+    action: quarantine
+    reason: "HTML/SVG can smuggle script (MITRE ATT&CK T1027.006). Quarantine in v1; 'strip' needs a re-scan path first."
+  - id: R15
+    when: pdf_active_content
+    action: quarantine
+    reason: "PDF with active content (JavaScript, auto-actions, launch, embedded files), as counted by pdfid."
+  - id: R16
+    when: high_confidence_script_signature
+    action: quarantine
+    reason: "High-confidence script signature (encoded PowerShell, script host, download cradle) in an otherwise allowed file."
+  - id: R17
+    when: office_dde_field
+    action: quarantine
+    reason: "DDE field in an Office document: can launch commands without macros."
+  - id: R13
+    when: extension in allowlisted_extensions and extension_family == true_type_class
+    action: allow
+    reason: "Allow-list by true file type (ACSC email guidance); content verified; passed all checks above."
+  - id: R14
+    when: always
+    action: quarantine
+    reason: "DEFAULT DENY: unknown or unlisted types are held, never delivered silently."
+
+exception_process:
+  applies_to: [quarantine]      # reject is final; use another channel
+  steps:
+    - "Recipient or sender files a ticket naming the file, sender and business need."
+    - "Business owner and security reviewer both approve."
+    - "Release is scoped (this sender -> this recipient), time-limited (e.g. 30 days) and logged."
+    - "Released files are still scanned; exceptions never skip R01."

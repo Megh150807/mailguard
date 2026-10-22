@@ -1,0 +1,17 @@
+[project]
+name = "mailguard"
+version = "0.1.0"
+description = "SMTP gateway that screens email attachments by true type, content and sender authentication"
+requires-python = ">=3.11"
+dependencies = [
+    "aiosmtpd>=1.4.6",
+    "capstone>=5.0.9",
+    "dkimpy>=1.1.8",
+    "dnspython>=2.9.0",
+    "lief>=1.0.0",
+    "oletools>=0.60.2",
+    "publicsuffixlist>=1.1.2.20261021",
+    "pyspf>=2.0.14",
+    "pyyaml>=6",
+    "yara-x>=1.22.0",
+]

@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.pyc
+quarantine/
+.ruff_cache/

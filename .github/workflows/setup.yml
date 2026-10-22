@@ -1,0 +1,32 @@
+# Runs the real installers on Linux, macOS and Windows and the installation self-check.
+name: setup
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: install (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install and self-check (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: ./install.sh --yes
+
+      - name: Install and self-check (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./install.ps1 -Yes
