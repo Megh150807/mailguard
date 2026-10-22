@@ -46,6 +46,7 @@ class FileVerdict:
 class Facts:
     filename: str
     ext: str
+    depth: int = 0  # 0 = attachment, 1+ = inside an archive
     true_type: str = "unknown"
     cls: str = "unknown"
     mime_defect: bool = False
@@ -127,6 +128,7 @@ class Policy:
             "high_confidence_script_signature": lambda f: bool(f.script_hits),
             "extension in allowlisted_extensions and extension_family == true_type_class":
                 lambda f: f.ext in lists["allowlisted_extensions"] and fam(f) == f.cls,
+            "archive_member_plain_text": lambda f: f.depth > 0 and f.cls == "text",
             "always": lambda f: True,
         }
         if not cfg["rules"] or cfg["rules"][-1]["when"] != "always":
@@ -156,7 +158,7 @@ class Policy:
     def evaluate_file(self, filename: str, data: bytes, mime_defect: bool = False, depth: int = 0,
                       budget: dict | None = None) -> FileVerdict:
         budget = budget if budget is not None else {"members": 0, "bytes": 0}
-        f = Facts(filename=filename, ext=extension(filename), mime_defect=mime_defect)
+        f = Facts(filename=filename, ext=extension(filename), mime_defect=mime_defect, depth=depth)
         reason_extra = ""
         try:
             f.unsafe_name = unsafe_filename(filename, archive_member=depth > 0)
@@ -171,7 +173,12 @@ class Policy:
                     f.vba = True  # Excel 4 macro sheet counts as a macro (R11)
             if f.true_type == "pdf":
                 f.pdf_active = pdf_active_content(data)
-            hits, decoded_all = signatures.scan_layers_checked(data)
+            if f.true_type == "zip" and f.cls == "archive":
+                # members are decoded and scanned one by one; decoding the container itself would
+                # only burn the budget on embedded media (e.g. icon packs)
+                hits, decoded_all = signatures.scan(data), True
+            else:
+                hits, decoded_all = signatures.scan_layers_checked(data)
             f.script_hits = [h for h in hits if h.weight >= signatures.HIGH_CONFIDENCE and h.category != "signature"]
             if not decoded_all:
                 f.incomplete = True  # decoding budget exhausted (decoy flooding): fail closed

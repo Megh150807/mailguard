@@ -17,7 +17,7 @@ smtp_reply:
 limits:
   max_attachment_mb: 25
   max_archive_depth: 3        # archive inside archive inside archive is OK; a 4th level -> quarantine
-  max_archive_members: 100    # total across all nesting levels
+  max_archive_members: 1000   # total across all nesting levels
   max_unpacked_mb: 50
   max_compression_ratio: 100  # unpacked/packed; above this looks like a zip bomb
 
@@ -151,6 +151,10 @@ rules:
     when: extension in allowlisted_extensions and extension_family == true_type_class
     action: allow
     reason: "Allow-list by true file type (ACSC email guidance); content verified; passed all checks above."
+  - id: R19
+    when: archive_member_plain_text
+    action: allow
+    reason: "Plain-text member of an archive (e.g. source files); still scanned for scripts (R16) above."
   - id: R14
     when: always
     action: quarantine

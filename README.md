@@ -153,6 +153,7 @@ The policy lives in [`Policy.yaml`](Policy.yaml). Each file in a message is chec
 | R16 | High-confidence script signature, also after decoding | quarantine |
 | R17 | DDE field in an Office document | quarantine |
 | R13 | Allow-listed type (`pdf png jpg gif txt csv docx xlsx pptx zip`) whose true type matches | allow |
+| R19 | Plain-text member inside an archive (e.g. source files), after scanning | allow |
 | R14 | Everything else (default deny) | quarantine |
 
 Principles: judge content not labels; allow-list with default deny; fail closed; every non-allow verdict has a way forward (quarantine review).
@@ -211,7 +212,7 @@ The static report runs nine stages: hashes, identification (PE, ELF, Mach-O), st
 | --- | --- |
 | `MAILGUARD_POLICY` | path to an alternative policy file |
 
-Limits (in `Policy.yaml`): attachment 25 MB, archive depth 3, 100 archive members, 50 MB unpacked, compression ratio 100, analyzer timeout 10 s.
+Limits (in `Policy.yaml`): attachment 25 MB, archive depth 3, 1,000 archive members, 50 MB unpacked, compression ratio 100, analyzer timeout 10 s.
 
 ## Security model and limits
 
@@ -219,7 +220,7 @@ Limits (in `Policy.yaml`): attachment 25 MB, archive depth 3, 100 archive member
 - **Isolation.** Native binary parsers (LIEF, Capstone) and the Office analyzer run in a separate process with a timeout (plus memory and CPU limits on Linux), so a crash or hang on a hostile file cannot stop the gateway.
 - **Logs** contain message hashes, rule ids and attachment names, never message content.
 - **Not included:** sandbox detonation, content disarm and reconstruction, antivirus signatures beyond the EICAR test string, TLS termination, and rate limiting. Static checks can be evaded by determined obfuscation; MailGuard reduces risk, it does not guarantee that no malware gets through.
-- **False positives** are expected for HTML attachments, macro documents, encrypted archives and archives with unusual member types; that is what the quarantine review is for.
+- **False positives** are expected for HTML attachments, macro documents, encrypted archives and archives containing HTML, fonts or very many files; that is what the quarantine review is for.
 
 ## Project layout
 
